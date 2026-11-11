@@ -24,6 +24,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        (application as WatchApp).brain.registerSensors()
+        (application as WatchApp).session.value?.brain?.registerSensors()
     }
 }

@@ -6,10 +6,9 @@ SERIAL="$1"
 QUERY="$2"
 ADB="${ANDROID_HOME:-$HOME/Android/Sdk}/platform-tools/adb"
 
-"$ADB" -s "$SERIAL" shell uiautomator dump /sdcard/vl_ui.xml >/dev/null 2>&1
-XML="$("$ADB" -s "$SERIAL" shell cat /sdcard/vl_ui.xml)"
-
-BOUNDS="$(printf '%s' "$XML" | python3 -c '
+find_bounds() {
+  "$ADB" -s "$SERIAL" shell uiautomator dump /sdcard/vl_ui.xml >/dev/null 2>&1 || true
+  "$ADB" -s "$SERIAL" shell cat /sdcard/vl_ui.xml 2>/dev/null | python3 -c '
 import re, sys
 q = sys.argv[1]
 xml = sys.stdin.read()
@@ -28,7 +27,17 @@ for exact in (True, False):
                 print((x1 + x2) // 2, (y1 + y2) // 2)
                 sys.exit(0)
 sys.exit(1)
-' "$QUERY")" || { echo "No encontrado: $QUERY" >&2; exit 1; }
+' "$QUERY"
+}
 
-"$ADB" -s "$SERIAL" shell input tap $BOUNDS
-echo "Tap '$QUERY' en $BOUNDS"
+# uiautomator a veces devuelve un árbol vacío durante animaciones o transiciones: se reintenta
+for attempt in 1 2 3 4; do
+  if BOUNDS="$(find_bounds)"; then
+    "$ADB" -s "$SERIAL" shell input tap $BOUNDS
+    echo "Tap '$QUERY' en $BOUNDS"
+    exit 0
+  fi
+  sleep 1
+done
+echo "No encontrado: $QUERY" >&2
+exit 1

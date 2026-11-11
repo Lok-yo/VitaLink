@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -68,6 +69,8 @@ import com.vitalink.core.model.VitalStatus
 import com.vitalink.core.util.Times
 import com.vitalink.wear.WatchApp
 import com.vitalink.wear.WatchBrain
+import com.vitalink.wear.WatchSession
+import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.delay
 
 object W {
@@ -92,8 +95,24 @@ object W {
 
 @Composable
 fun WatchRoot(app: WatchApp) {
-    val repo = app.repository
-    val brain = app.brain
+    val session by app.session.collectAsState()
+    val auth by app.account.status.collectAsState()
+    val current = session
+    if (current == null) {
+        MaterialTheme {
+            AppScaffold(modifier = Modifier.semantics { testTagsAsResourceId = true }) {
+                if (auth is SessionStatus.Initializing) BeatingSplash() else PairingScreen(app)
+            }
+        }
+    } else {
+        key(current) { PairedRoot(app, current) }
+    }
+}
+
+@Composable
+private fun PairedRoot(app: WatchApp, session: WatchSession) {
+    val repo = session.repository
+    val brain = session.brain
     val st by repo.state.collectAsState()
     val reading by brain.reading.collectAsState()
     val countdown by brain.countdown.collectAsState()
@@ -116,7 +135,7 @@ fun WatchRoot(app: WatchApp) {
                 composable("home") {
                     HomeScreen(st, reading, brain, openDemo = { nav.navigate("demo") }, openMeds = { nav.navigate("meds") })
                 }
-                composable("demo") { DemoScreen(brain, done = { nav.popBackStack() }) }
+                composable("demo") { DemoScreen(brain, done = { nav.popBackStack() }, unpair = { app.unpair() }) }
                 composable("meds") { MedsScreen(st, brain) }
             }
             val c = countdown
@@ -284,7 +303,8 @@ private val simItems = listOf(
 )
 
 @Composable
-private fun DemoScreen(brain: WatchBrain, done: () -> Unit) {
+private fun DemoScreen(brain: WatchBrain, done: () -> Unit, unpair: () -> Unit) {
+    var confirmUnpair by remember { mutableStateOf(false) }
     val list = rememberTransformingLazyColumnState()
     ScreenScaffold(scrollState = list) { padding ->
         TransformingLazyColumn(state = list, contentPadding = padding, modifier = Modifier.testTag("watch_demo_list")) {
@@ -302,6 +322,14 @@ private fun DemoScreen(brain: WatchBrain, done: () -> Unit) {
                         label = { Text(s.label, fontSize = 15.sp) },
                     )
                 }
+            }
+            item {
+                Button(
+                    onClick = { if (confirmUnpair) unpair() else confirmUnpair = true },
+                    modifier = Modifier.fillMaxWidth().testTag("watch_unpair"),
+                    colors = ButtonDefaults.buttonColors(containerColor = W.Gray, contentColor = if (confirmUnpair) W.Red else W.Muted),
+                    label = { Text(if (confirmUnpair) "Toca otra vez para desvincular" else "Desvincular reloj", fontSize = 13.sp) },
+                )
             }
         }
     }

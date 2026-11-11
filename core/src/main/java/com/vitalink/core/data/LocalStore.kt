@@ -51,10 +51,10 @@ data class PendingOp(
     }
 }
 
-class LocalStore(context: Context) {
+class LocalStore(context: Context, patientId: String) {
     private val dir = context.filesDir
-    private val cacheFile = File(dir, "vitalink_cache.json")
-    private val outboxFile = File(dir, "vitalink_outbox.json")
+    private val cacheFile = File(dir, "vitalink_cache_$patientId.json")
+    private val outboxFile = File(dir, "vitalink_outbox_$patientId.json")
 
     fun loadSnapshot(): CacheSnapshot? = runCatching {
         if (!cacheFile.exists()) null else Cloud.json.decodeFromString(CacheSnapshot.serializer(), cacheFile.readText())
@@ -65,6 +65,13 @@ class LocalStore(context: Context) {
             val tmp = File(dir, "vitalink_cache.tmp")
             tmp.writeText(Cloud.json.encodeToString(CacheSnapshot.serializer(), snapshot))
             tmp.renameTo(cacheFile)
+        }
+    }
+
+    fun clear() {
+        runCatching {
+            cacheFile.delete()
+            outboxFile.delete()
         }
     }
 
@@ -111,6 +118,16 @@ class DeviceIdentity(context: Context, defaultName: String, defaultRelation: Str
             phone = prefs.getString("phone", "") ?: "",
             onboarded = prefs.getBoolean("onboarded", false),
         )
+    }
+
+    /** Círculo abierto la última vez: permite reabrirlo al instante y sin red. */
+    var selectedPatientId: String?
+        get() = prefs.getString("patient_id", null)
+        set(value) = prefs.edit().putString("patient_id", value).apply()
+
+    fun clearCircle() {
+        prefs.edit().remove("patient_id").putBoolean("onboarded", false).apply()
+        _profile.value = _profile.value.copy(onboarded = false)
     }
 
     fun save(name: String, relation: String, color: String, phone: String) {

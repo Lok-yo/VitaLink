@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -70,6 +71,7 @@ import com.vitalink.core.model.CountdownSignal
 import com.vitalink.mobile.VitaLinkApp
 import com.vitalink.mobile.ui.theme.VIcons
 import com.vitalink.mobile.ui.theme.Vita
+import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -94,12 +96,14 @@ fun rememberNow(): Long {
 
 @Composable
 fun AppRoot(app: VitaLinkApp) {
-    val profile by app.identity.profile.collectAsState()
+    val auth by app.account.status.collectAsState()
+    val session by app.session.collectAsState()
     Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
-        if (!profile.onboarded) {
-            Onboarding(app)
-        } else {
-            MainShell(app)
+        when {
+            session != null -> key(session) { MainShell(app) }
+            auth is SessionStatus.Initializing -> Splash()
+            app.account.hasSession() -> CirclePicker(app)
+            else -> AuthScreen(app)
         }
     }
 }
@@ -110,6 +114,7 @@ private fun MainShell(app: VitaLinkApp) {
     val profile by app.identity.profile.collectAsState()
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var dismissed by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var showCircle by rememberSaveable { mutableStateOf(false) }
     val now = rememberNow()
 
     val overlayAlert = state.openAlerts
@@ -151,7 +156,7 @@ private fun MainShell(app: VitaLinkApp) {
                     modifier = Modifier.weight(1f),
                 ) { current ->
                     when (current) {
-                        Tab.Home -> DashboardScreen(app, state, profile, now, openTab = { tab = it }, openAlert = { id -> dismissed = dismissed - id })
+                        Tab.Home -> DashboardScreen(app, state, profile, now, openTab = { tab = it }, openAlert = { id -> dismissed = dismissed - id }, openCircle = { showCircle = true })
                         Tab.Meds -> MedsScreen(app, state, now)
                         Tab.Alerts -> AlertsScreen(app, state, profile, now, open = { id -> dismissed = dismissed - id })
                         Tab.Log -> LogScreen(app, state, profile, now)
@@ -160,6 +165,8 @@ private fun MainShell(app: VitaLinkApp) {
                 }
             }
         }
+
+        if (showCircle) CircleSheet(app, state, now, onDismiss = { showCircle = false })
 
         AnimatedVisibility(
             visible = overlayAlert != null,
@@ -207,84 +214,6 @@ private fun CountdownBanner(state: CareState) {
                     modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                 )
             }
-        }
-    }
-}
-
-private val relations = listOf("Hija", "Hijo", "Nieta", "Nieto", "Pareja", "Enfermera/o", "Médico", "Vecina/o")
-private val colors = listOf("#4F6BFF", "#E8618C", "#0E9F8E", "#F59E0B", "#7C5CFF", "#18A0FB")
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun Onboarding(app: VitaLinkApp) {
-    val state by app.repository.state.collectAsState()
-    var name by rememberSaveable { mutableStateOf("Alexis") }
-    var relation by rememberSaveable { mutableStateOf("Nieto") }
-    var color by rememberSaveable { mutableStateOf(colors.first()) }
-    var phone by rememberSaveable { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
-    val nickname = state.patient?.nickname ?: "Abuela Rosa"
-
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(Vita.Teal, Vita.TealDark)),
-        ),
-    ) {
-        Column(
-            Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Spacer(Modifier.height(24.dp))
-            Box(Modifier.size(84.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
-                BeatingHeart(bpm = 68, color = Color.White, size = 64.dp)
-            }
-            Text("VitaLink", style = MaterialTheme.typography.displayMedium, color = Color.White)
-            Text(
-                "Cuidemos juntos a $nickname. Todo lo que pase en su reloj lo verás aquí al instante, y lo que hagas aquí lo verá toda la familia.",
-                color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodyLarge,
-            )
-            Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("¿Quién eres en el círculo de cuidado?", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(
-                        value = name, onValueChange = { name = it }, label = { Text("Tu nombre") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth().testTag("onboarding_name"),
-                    )
-                    Text("Parentesco", style = MaterialTheme.typography.labelLarge)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        relations.forEach { r -> FilterChip(selected = relation == r, onClick = { relation = r }, label = { Text(r) }) }
-                    }
-                    Text("Tu color", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        colors.forEach { c ->
-                            val selected = c == color
-                            Box(
-                                Modifier.size(if (selected) 40.dp else 34.dp).clip(CircleShape).background(Vita.parse(c))
-                                    .clickable { color = c },
-                                contentAlignment = Alignment.Center,
-                            ) { if (selected) Icon(VIcons.Check, null, tint = Color.White) }
-                        }
-                    }
-                    OutlinedTextField(
-                        value = phone, onValueChange = { phone = it }, label = { Text("Teléfono (opcional)") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    )
-                    Button(
-                        onClick = {
-                            app.identity.save(name.trim().ifBlank { "Familiar" }, relation, color, phone.trim())
-                            scope.launch { app.repository.registerCaregiver() }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(56.dp).testTag("onboarding_enter"),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Vita.Teal),
-                    ) { Text("Entrar al círculo de cuidado", fontWeight = FontWeight.Bold) }
-                }
-            }
-            Text(
-                "Sin cuentas ni contraseñas para la demo: todos los dispositivos se conectan directo a Supabase.",
-                color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
     }
 }

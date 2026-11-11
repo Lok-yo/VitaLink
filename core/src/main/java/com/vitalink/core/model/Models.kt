@@ -18,19 +18,38 @@ data class Patient(
     @SerialName("home_label") val homeLabel: String = "Casa",
     @SerialName("safe_radius_m") val safeRadiusM: Int = 250,
     @SerialName("step_goal") val stepGoal: Int = 4000,
-    @SerialName("pair_code") val pairCode: String? = null,
+    @SerialName("invite_code") val inviteCode: String? = null,
 )
 
+object MemberRole {
+    const val OWNER = "owner"
+    const val CAREGIVER = "caregiver"
+    const val DEVICE = "device"
+}
+
+/** Miembro del círculo de cuidado: un familiar con cuenta o el reloj vinculado. */
 @Serializable
 data class Caregiver(
     val id: String? = null,
     @SerialName("patient_id") val patientId: String,
+    @SerialName("user_id") val userId: String? = null,
     val name: String,
     val relation: String,
     val color: String = "#4F7CFF",
     val phone: String? = null,
-    @SerialName("device_id") val deviceId: String? = null,
+    val role: String = MemberRole.CAREGIVER,
     @SerialName("last_seen_at") val lastSeenAt: String? = null,
+)
+
+/** Una membresía con los datos de su paciente (para el selector de círculos). */
+@Serializable
+data class Membership(
+    @SerialName("patient_id") val patientId: String,
+    val name: String,
+    val relation: String,
+    val color: String = "#4F7CFF",
+    val role: String = MemberRole.CAREGIVER,
+    val patients: Patient? = null,
 )
 
 object VitalStatus {

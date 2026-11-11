@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -41,6 +42,7 @@ import com.vitalink.core.data.CareState
 import com.vitalink.core.data.LinkStatus
 import com.vitalink.core.data.Profile
 import com.vitalink.core.engine.Geo
+import com.vitalink.core.model.MemberRole
 import com.vitalink.core.model.VitalStatus
 import com.vitalink.core.util.Times
 import com.vitalink.mobile.VitaLinkApp
@@ -57,6 +59,7 @@ fun DashboardScreen(
     now: Long,
     openTab: (Tab) -> Unit,
     openAlert: (String) -> Unit,
+    openCircle: () -> Unit,
 ) {
     val patient = state.patient
     val vitals = state.vitals
@@ -76,7 +79,12 @@ fun DashboardScreen(
                     Text("Hola, ${profile.name}", style = MaterialTheme.typography.headlineSmall)
                     Text(Times.today(patient?.timezone), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                ConnectionPill(state.connection, Modifier.testTag("connection_pill"))
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(onClick = openCircle, shape = CircleShape, modifier = Modifier.testTag("open_circle")) {
+                        Avatar(profile.name, Vita.parse(profile.color), 40.dp)
+                    }
+                    ConnectionPill(state.connection, Modifier.testTag("connection_pill"))
+                }
             }
         }
 
@@ -256,7 +264,7 @@ fun DashboardScreen(
                 Text("Círculo de cuidado", style = MaterialTheme.typography.titleMedium)
                 val onlineNames = state.devices.values.filter { now - it.lastSeen < 30_000 }.map { it.ping.name }.toSet()
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    items(state.caregivers.sortedBy { it.name }) { c ->
+                    items(state.caregivers.filter { it.role != MemberRole.DEVICE }.sortedBy { it.name }) { c ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(64.dp)) {
                             Avatar(c.name, Vita.parse(c.color), 48.dp, online = c.name in onlineNames)
                             Text(c.name, style = MaterialTheme.typography.labelMedium, maxLines = 1)

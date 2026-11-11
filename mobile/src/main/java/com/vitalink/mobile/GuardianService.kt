@@ -10,13 +10,17 @@ import android.util.Log
 import com.vitalink.core.data.LinkStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** Mantiene vivo el canal de Realtime para recibir emergencias aunque la app esté en segundo plano. */
+@OptIn(ExperimentalCoroutinesApi::class)
 class GuardianService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -37,14 +41,16 @@ class GuardianService : Service() {
             return START_NOT_STICKY
         }
         scope.launch {
-            app.repository.state
-                .map { st ->
-                    val name = st.patient?.nickname ?: "tu familiar"
-                    when (st.connection.status) {
-                        LinkStatus.LIVE -> "Cuidando a $name · en vivo"
-                        LinkStatus.CONNECTING -> "Reconectando…"
-                        LinkStatus.OFFLINE -> "Sin conexión · reintentando"
-                    }
+            app.session
+                .flatMapLatest { session ->
+                    session?.repository?.state?.map { st ->
+                        val name = st.patient?.nickname ?: "tu familiar"
+                        when (st.connection.status) {
+                            LinkStatus.LIVE -> "Cuidando a $name · en vivo"
+                            LinkStatus.CONNECTING -> "Reconectando…"
+                            LinkStatus.OFFLINE -> "Sin conexión · reintentando"
+                        }
+                    } ?: flowOf("Abre un círculo de cuidado para monitorear")
                 }
                 .distinctUntilChanged()
                 .collect { text ->

@@ -81,6 +81,11 @@ class WatchBrain(private val context: Context, private val repo: CareRepository)
         repo.launch { repo.events.collect { handle(it) } }
     }
 
+    fun stop() {
+        sensors?.unregisterListener(this)
+        countdownJob?.cancel()
+    }
+
     fun registerSensors() {
         sensors?.unregisterListener(this)
         val found = mutableListOf<String>()

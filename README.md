@@ -117,15 +117,39 @@ Debes ver en **ambos**:
 
 ```
 VitaLink-Sync: Datos sincronizados: 4 medicinas, 6 tomas, ...
-VitaLink-Sync: Realtime SUSCRITO al canal care-a1e5d000-0000-4000-a000-000000000001 (phone|watch)
+VitaLink-Sync: Realtime SUSCRITO al canal care-<patient_id> (phone|watch)
 ```
 
 En el teléfono la píldora superior muestra **"En vivo · N ms"** (latencia real del último evento).
 
-## 5. Guion de demo (lo que se probó de punta a punta)
+## 5. Cuentas, círculos y vinculación del reloj
 
-En el teléfono, la primera vez aparece la bienvenida (nombre "Alexis", parentesco "Nieto"): toca
-**Entrar al círculo de cuidado**. Luego usa la pestaña **Demo** (teléfono) o el botón **Simulación** (reloj).
+Nadie ve nada sin sesión. Cada paciente tiene un **círculo de cuidado**: sólo sus miembros pueden leer o escribir sus
+datos y escuchar su canal en vivo.
+
+1. **Teléfono → Crear cuenta** (nombre, correo, contraseña de 8+). No se pide confirmar el correo: la cuenta queda lista al instante.
+   Cuenta de demo ya creada: `alexis.vitalink@gmail.com` / `Vitalink2026`.
+2. **Registrar a mi familiar**: crea al paciente (apodo, edad, zona segura, "Cargar tratamiento de ejemplo") y tú quedas como administrador.
+3. **Invitar a la familia**: toca tu avatar arriba a la derecha → *Código para invitar a la familia* (6 dígitos, botón Compartir).
+   Otro familiar crea su cuenta → **Tengo un código de invitación**.
+4. **Vincular el reloj**: el reloj sin vincular muestra un código de 6 dígitos. En el teléfono: avatar → *Reloj del paciente* →
+   escribe el código → **Vincular**. En ~3 s el reloj entra con su propia cuenta, limitada a ese paciente.
+5. La sesión se guarda en ambos dispositivos: al reabrir la app (o reiniciar el emulador) vuelven solos a su círculo.
+   *Cambiar de círculo* y *Cerrar sesión* están en el mismo menú del avatar; el reloj se desvincula desde **Simulación**.
+
+Protecciones: tras 10 códigos incorrectos (invitación o reloj) en una hora, la cuenta queda bloqueada para códigos durante
+esa hora; el código del reloj vence a los 10 min.
+
+Comprobar todo el modelo de seguridad contra la nube (crea cuentas temporales `prueba.*@gmail.com`):
+
+```bash
+scripts/auth-smoke-test.sh   # 18 comprobaciones: registro, aislamiento, invitaciones, límite de intentos, reloj
+```
+
+## 6. Guion de demo (lo que se probó de punta a punta)
+
+Ya dentro del círculo, usa la pestaña **Demo** (teléfono) o el botón **Simulación** (reloj). Los botones de demo funcionan
+igual que siempre, ahora por el canal privado del círculo.
 
 | Escenario | Qué hacer | Qué pasa |
 |---|---|---|
@@ -142,14 +166,19 @@ En el teléfono, la primera vez aparece la bienvenida (nombre "Alexis", parentes
 
 ### Simular a otro familiar desde la terminal
 
+Con la sesión de un miembro del círculo (la clave anon sola ya no ve nada):
+
 ```bash
 source <(grep -E "^SUPABASE_(URL|KEY)=" supabase.properties | sed 's/^/export /')
+TOKEN=$(curl -s -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" -H "apikey: $SUPABASE_KEY" \
+  -H "Content-Type: application/json" -d '{"email":"alexis.vitalink@gmail.com","password":"Vitalink2026"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 # próxima toma pendiente
 curl -s "$SUPABASE_URL/rest/v1/medication_doses?select=id&status=eq.pending&order=scheduled_for.asc&limit=1" \
-  -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY"
-# Mariana la confirma (sólo gana si sigue pendiente)
+  -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $TOKEN"
+# confirmarla (sólo gana si sigue pendiente)
 curl -s -X PATCH "$SUPABASE_URL/rest/v1/medication_doses?id=eq.<ID>&status=in.(pending,snoozed)" \
-  -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Content-Type: application/json" \
+  -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -H "Prefer: return=representation" -d '{"status":"taken","confirmed_by":"Mariana","confirmed_device":"phone"}'
 ```
 
@@ -158,6 +187,8 @@ curl -s -X PATCH "$SUPABASE_URL/rest/v1/medication_doses?id=eq.<ID>&status=in.(p
 Las apps exponen sus `testTag` como `resource-id`, así que se pueden automatizar con `uiautomator`:
 
 ```bash
+scripts/tap.sh emulator-5554 auth_email        # auth_tab_login, auth_tab_register, auth_name, auth_password, auth_submit
+scripts/tap.sh emulator-5554 open_circle       # menú del círculo: invite_code, watch_code_input, watch_code_submit, sheet_sign_out
 scripts/tap.sh emulator-5554 tab_Demo          # pestañas: tab_Home, tab_Meds, tab_Alerts, tab_Log, tab_Demo
 scripts/tap.sh emulator-5554 sim_tachycardia   # sim_fall, sim_sos, sim_leave_zone, sim_normal, ...
 scripts/tap.sh emulator-5554 ack_button        # "Yo atiendo"; luego resolve_button
@@ -165,23 +196,27 @@ scripts/tap.sh emulator-5556 watch_sos         # watch_cancel, watch_take, watch
 adb -s emulator-5556 exec-out screencap -p > reloj.png
 ```
 
-## 6. Arquitectura
+## 7. Arquitectura
 
 ```
 core/
   model/Models.kt          Tablas + mensajes Broadcast (VitalsPulse, CountdownSignal, SimCommand, DevicePing)
-  data/CareRepository.kt   Carga inicial, canal Realtime por paciente, supervisor de reconexión,
+  data/Account.kt          Registro/inicio de sesión (Supabase Auth), círculos, invitaciones, vinculación del reloj
+  data/CareRepository.kt   Carga inicial, canal Realtime privado por paciente, supervisor de reconexión,
                            escrituras optimistas, "gana el primero" y bandeja de salida
-  data/LocalStore.kt       Caché JSON (abre sin red), outbox persistente, identidad del dispositivo
+  data/LocalStore.kt       Caché JSON y outbox por paciente (abre sin red), identidad y círculo seleccionado
   engine/VitalsEngine.kt   Pulso/pasos/batería/GPS realistas con escenarios graduales (sensor real si existe)
   engine/AnomalyDetector   Taquicardia, bradicardia, geocerca, batería (condición sostenida + rearme)
   engine/FallDetector      Caída libre + impacto por acelerómetro
-mobile/                    Panel, Medicinas, Alertas, Bitácora, Demo, overlay de emergencia,
+mobile/                    Login/registro, selector de círculos, panel, Medicinas, Alertas, Bitácora, Demo,
+                           menú del círculo (invitar, vincular reloj, cerrar sesión), overlay de emergencia,
                            notificaciones, servicio en primer plano (dataSync), reloj virtual
-wear/                      WatchBrain (sensores, cuentas regresivas, recordatorios) + UI de alto contraste
+wear/                      Pantalla de vinculación por código, WatchBrain (sensores, cuentas regresivas,
+                           recordatorios) + UI de alto contraste
+supabase/functions/        sign-up (cuentas sin confirmación por correo) y device-pairing (código del reloj)
 ```
 
-**Realtime** — un canal `care-<patient_id>` por paciente:
+**Realtime** — un canal **privado** `care-<patient_id>` por paciente (sólo miembros, validado con políticas en `realtime.messages`):
 
 - *Postgres Changes* (estado durable): `alerts`, `medication_doses`, `medications`, `care_log`, `vitals_live`, `caregivers`, `patients`.
 - *Broadcast* (efímero, sin tocar la BD): `vitals` (pulso a 1 Hz), `countdown` (cuenta regresiva del reloj), `sim` (órdenes del simulador), `ping` (presencia de dispositivos).
@@ -191,17 +226,24 @@ El reloj persiste `vitals_live` cada 3 s y `vitals_history` cada 10 s; el teléf
 **Resiliencia** — al reconectar se recarga todo y se vacía la bandeja de salida; las inserciones usan UUID del cliente
 (reintentos idempotentes); las confirmaciones usan `UPDATE … WHERE status IN (…)` para que sólo gane el primero.
 
-## 7. Base de datos (Supabase)
+## 8. Base de datos (Supabase)
 
 Proyecto **VitaLink** (`fygxsmtfwucgwweismkw`, us-west-1). Credenciales en `supabase.properties` (ignorado por git; plantilla en `supabase.properties.example`); se inyectan como `BuildConfig` del módulo `core`.
 
 Las migraciones aplicadas están en `supabase/migrations/` (en orden). Para otro proyecto: ejecútalas en el SQL Editor
-(o `supabase db push`) y pon su URL y anon key en `supabase.properties`.
+(o `supabase db push`), despliega las funciones y pon su URL y anon key en `supabase.properties`:
+
+```bash
+supabase functions deploy sign-up --no-verify-jwt
+supabase functions deploy device-pairing --no-verify-jwt
+```
 
 | Tabla | Uso |
 |---|---|
-| `patients` | Paciente demo "Abuela Rosa", casa, radio de zona segura, zona horaria `America/Hermosillo` |
-| `caregivers` | Familiares (Mariana, Dr. Salas + cada teléfono que entra) |
+| `patients` | Cada paciente: casa, radio de zona segura, zona horaria, `invite_code` de 6 dígitos |
+| `caregivers` | Miembros del círculo: cuenta (`user_id`), parentesco, color y rol `owner` / `caregiver` / `device` (reloj) |
+| `device_pairings` | Códigos de vinculación de relojes (sólo accesible desde la función `device-pairing`) |
+| `code_attempts` | Intentos fallidos de códigos, para el límite de 10 por hora |
 | `vitals_live` / `vitals_history` | Último estado y muestras históricas |
 | `medications` / `medication_doses` | Tratamientos y tomas del día (`ensure_doses()` las genera) |
 | `alerts` | SOS, caída, taquicardia, bradicardia, geocerca, batería, con quién atiende y ETA |
@@ -209,18 +251,27 @@ Las migraciones aplicadas están en `supabase/migrations/` (en orden). Para otro
 
 Extras: un job de `pg_cron` (cada minuto) marca como "no confirmada" una toma con más de 60 min de atraso y genera las tomas del día en curso.
 
-> **Seguridad (demo):** RLS está activado con políticas abiertas para el rol `anon`, para probar sin login.
-> Antes de producción: Supabase Auth, políticas por círculo de cuidado y canales privados de Realtime.
+**Seguridad:** RLS por círculo con `is_member(patient_id)`; el rol `anon` no ve ni escribe nada. Las altas pasan por
+funciones (`create_patient`, `join_circle`, `claim_device`) que validan la sesión y la pertenencia. Las funciones en la
+nube usan la clave de servicio, que nunca sale del servidor. Pendiente opcional: activar *Leaked password protection*
+en Authentication → Settings del panel de Supabase.
 
-Reiniciar los datos de la demo (SQL Editor o MCP):
+Limpiar alertas y bitácora de un círculo (SQL Editor o MCP):
 
 ```sql
-delete from alerts; delete from care_log where author <> 'VitaLink';
-update medication_doses set status = 'pending', confirmed_by = null, confirmed_device = null, confirmed_at = null,
-  snoozed_until = null, snooze_count = 0 where scheduled_for > now();
+delete from alerts; delete from care_log where kind <> 'system';
 ```
 
-## 8. Problemas comunes
+Borrar cuentas de prueba creadas por `scripts/auth-smoke-test.sh`:
+
+```sql
+delete from patients where id in (select c.patient_id from caregivers c join auth.users u on u.id = c.user_id
+  where u.email like 'prueba.%@gmail.com');
+delete from auth.users where email like 'prueba.%@gmail.com'
+  or (email like 'reloj-%@watch.vitalink.app' and id not in (select user_id from caregivers));
+```
+
+## 9. Problemas comunes
 
 | Síntoma | Solución |
 |---|---|
@@ -228,4 +279,6 @@ update medication_doses set status = 'pending', confirmed_by = null, confirmed_d
 | Los emuladores se cierran al cerrar la terminal | Lánzalos con `setsid nohup … &` |
 | `Running multiple emulators with the same AVD` | El anterior aún se está cerrando: espera a que `pgrep -af qemu` no lo muestre |
 | La píldora dice "Sin conexión" | Revisa internet del emulador (`ping` arriba); la app reintenta sola cada 2–20 s |
+| El reloj se queda en "Vincula tu reloj" | El código vence a los 10 min: toca **Nuevo código**; revisa que el teléfono muestre "Listo" |
+| "Demasiados intentos con códigos incorrectos" | Espera una hora o borra las filas de `code_attempts` de esa cuenta |
 | `uiautomator` no encuentra un elemento | Hay una animación o un overlay encima; reintenta o usa `adb shell input tap X Y` |

@@ -2,7 +2,9 @@ package com.vitalink.core.data
 
 import com.vitalink.core.BuildConfig
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.functions.Functions
 import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
@@ -19,7 +21,6 @@ object Cloud {
         coerceInputValues = true
     }
 
-    val patientId: String = BuildConfig.PATIENT_ID
     val isConfigured: Boolean get() = BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_KEY.isNotBlank()
 
     val client: SupabaseClient by lazy {
@@ -27,6 +28,12 @@ object Cloud {
             defaultSerializer = KotlinXSerializer(json)
             defaultLogLevel = LogLevel.WARNING
             requestTimeout = 10.seconds
+            install(Auth) {
+                alwaysAutoRefresh = true
+                autoLoadFromStorage = true
+                autoSaveToStorage = true
+            }
+            install(Functions)
             install(Postgrest)
             install(Realtime) {
                 reconnectDelay = 3.seconds

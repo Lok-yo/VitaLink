@@ -22,7 +22,7 @@ import com.vitalink.core.model.CountdownSignal
 import com.vitalink.core.model.DoseStatus
 
 /** Notificaciones del sistema para cuando la app no está en pantalla, más vibración en vivo. */
-class Notifier(private val context: Context, private val repository: CareRepository) {
+class Notifier(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val vibrator = context.getSystemService(Vibrator::class.java)
 
@@ -48,13 +48,14 @@ class Notifier(private val context: Context, private val repository: CareReposit
         manager.createNotificationChannels(listOf(critical, care, live))
     }
 
-    fun start() {
+    /** Escucha los eventos del círculo abierto; se detiene solo cuando ese repositorio se cierra. */
+    fun attach(repository: CareRepository) {
         repository.launch {
-            repository.events.collect { event -> handle(event) }
+            repository.events.collect { event -> handle(repository, event) }
         }
     }
 
-    private fun handle(event: CareEvent) {
+    private fun handle(repository: CareRepository, event: CareEvent) {
         val nickname = repository.state.value.patient?.nickname ?: "Tu familiar"
         val me = VitaLinkApp.instance.identity.profile.value.name
         when (event) {

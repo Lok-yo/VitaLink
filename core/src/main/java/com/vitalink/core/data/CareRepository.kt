@@ -18,6 +18,7 @@ import com.vitalink.core.model.VitalsLive
 import com.vitalink.core.model.VitalsPulse
 import com.vitalink.core.model.VitalsSample
 import com.vitalink.core.util.Times
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
@@ -125,6 +126,7 @@ class CareRepository(
     context: Context,
     private val identity: DeviceIdentity,
     private val deviceKind: String,
+    val patientId: String,
 ) {
     private val tag = "VitaLink-Sync"
     private val crashGuard = CoroutineExceptionHandler { _, e -> Log.e(tag, "Error no controlado en sincronización", e) }
@@ -134,9 +136,8 @@ class CareRepository(
     // del canal desde varios hilos a la vez provoca IndexOutOfBounds. Un solo hilo lo evita.
     @OptIn(ExperimentalCoroutinesApi::class)
     private val channelDispatcher = Dispatchers.IO.limitedParallelism(1)
-    private val store = LocalStore(context.applicationContext)
+    private val store = LocalStore(context.applicationContext, patientId)
     private val client get() = Cloud.client
-    private val patientId = Cloud.patientId
     private val outboxMutex = Mutex()
 
     private val _state = MutableStateFlow(CareState())
@@ -187,6 +188,7 @@ class CareRepository(
                 setConnection(LinkStatus.CONNECTING)
                 runCatching { refreshAll() }.onFailure { Log.w(tag, "Carga inicial falló: ${it.message}") }
                 ch = client.channel("care-$patientId") {
+                    isPrivate = true
                     broadcast { receiveOwnBroadcasts = false }
                 }
                 listen(ch, channelScope)
@@ -228,9 +230,10 @@ class CareRepository(
                 if (e is kotlinx.coroutines.CancellationException && !scope.isActive) throw e
                 Log.w(tag, "Realtime caído: ${e.message}")
                 setConnection(LinkStatus.OFFLINE, e.message)
+            } finally {
+                channelScope.cancel()
             }
             channel = null
-            channelScope.cancel()
             runCatching { ch?.let { client.realtime.removeChannel(it) } }
             runCatching { client.realtime.disconnect() }
             setConnection(LinkStatus.OFFLINE)
@@ -641,15 +644,26 @@ class CareRepository(
         insert("care_log", payload, null)
     }
 
-    suspend fun registerCaregiver() {
-        val p = me
-        val caregiver = Caregiver(
-            patientId = patientId, name = p.name, relation = p.relation, color = p.color,
-            phone = p.phone.ifBlank { null }, deviceId = p.deviceId, lastSeenAt = Times.nowIso(),
-        )
+    /** Marca a este miembro como activo (las reglas de acceso sólo le dejan tocar su propia fila). */
+    suspend fun touchMembership() {
+        val uid = client.auth.currentUserOrNull()?.id ?: return
         runCatching {
-            client.from("caregivers").upsert(caregiver) { onConflict = "device_id" }
-        }.onFailure { Log.w(tag, "No se pudo registrar al cuidador: ${it.message}") }
+            client.from("caregivers").update(buildJsonObject { put("last_seen_at", Times.nowIso()) }) {
+                filter {
+                    eq("patient_id", patientId)
+                    eq("user_id", uid)
+                }
+            }
+        }.onFailure { Log.w(tag, "No se pudo actualizar la membresía: ${it.message}") }
+    }
+
+    /** Detiene la sincronización de este paciente (cambio de círculo o cierre de sesión). */
+    suspend fun stop(clearLocal: Boolean = false) {
+        val ch = channel
+        channel = null
+        scope.cancel()
+        runCatching { ch?.let { client.realtime.removeChannel(it) } }
+        if (clearLocal) store.clear()
     }
 
     // endregion
