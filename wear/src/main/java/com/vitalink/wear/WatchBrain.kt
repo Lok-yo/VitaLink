@@ -226,7 +226,7 @@ class WatchBrain(private val context: Context, private val repo: CareRepository)
             val due = st.doses.filter { d ->
                 when (d.status) {
                     DoseStatus.PENDING -> Times.millis(d.scheduledFor) in (now - 60 * 60_000)..now
-                    DoseStatus.SNOOZED -> Times.millis(d.snoozedUntil) <= now
+                    DoseStatus.SNOOZED -> Times.millis(d.snoozedUntil) in (now - 60 * 60_000)..now
                     else -> false
                 }
             }.minByOrNull { Times.millis(it.scheduledFor) }
